@@ -2096,6 +2096,7 @@
       currentDashEventDetailLoading = false;
       currentDashEventDetailError = "";
       currentDashEventDetailMissingSnapshot = null;
+      renderCurrentTestDashboard();
       return;
     }
     currentDashEventDetailLoading = true;
@@ -2393,7 +2394,7 @@
     return `<article class="ctdash-card ctdash-section ctdash-wide-section">
       <div class="ctdash-section-head"><div><div class="ctdash-kicker">Purchase Amounts</div><h3>금액별 구매건수</h3><p>선택한 대회·기간의 결제 완료 건수 · 실제 결제금액 기준</p></div><span class="ctdash-tag">${valid ? "PAID Purchase" : "집계 대기"}</span></div>
       <div class="ctdash-metrics-grid ctdash-balanced-grid is-count-${otherCount ? 6 : 5}">
-        ${amounts.map(amount => metricCard(formatCurrency(amount), valid ? `${formatNumber(counts.get(amount))}건` : "대기 중", amount === 24900 ? "패키지" : "결제 완료")).join("")}
+        ${amounts.map(amount => metricCard(formatWon(amount), valid ? `${formatNumber(counts.get(amount))}건` : "대기 중", amount === 24900 ? "패키지" : "결제 완료")).join("")}
         ${valid && otherCount ? metricCard("기타 금액", `${formatNumber(otherCount)}건`, "위 5개 금액 외 결제") : ""}
       </div>
       ${valid ? "" : `<div class="ctdash-callout">해당 기간 snapshot에 금액별 집계가 아직 없습니다. 백엔드 반영 후 해당 기간 snapshot을 다시 생성해야 합니다.</div>`}
