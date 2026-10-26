@@ -2376,6 +2376,30 @@
       </section>`;
   }
 
+  function renderCurrentDashPurchaseAmounts(summary) {
+    const amounts = [6000, 12000, 18000, 24000, 24900];
+    const rows = Array.isArray(summary.purchase_amount_counts) ? summary.purchase_amount_counts : null;
+    const valid = rows !== null && rows.every(row =>
+      Number.isFinite(Number(row.amount)) && Number.isInteger(Number(row.purchase_count)) && Number(row.purchase_count) >= 0
+    ) && rows.reduce((sum, row) => sum + Number(row.purchase_count), 0) === numberValue(summary, ["purchase_count"]);
+    const counts = new Map(amounts.map(amount => [amount, 0]));
+    let otherCount = 0;
+    if (valid) rows.forEach(row => {
+      const amount = Number(row.amount);
+      const count = Number(row.purchase_count);
+      if (counts.has(amount)) counts.set(amount, counts.get(amount) + count);
+      else otherCount += count;
+    });
+    return `<article class="ctdash-card ctdash-section ctdash-wide-section">
+      <div class="ctdash-section-head"><div><div class="ctdash-kicker">Purchase Amounts</div><h3>금액별 구매건수</h3><p>선택한 대회·기간의 결제 완료 건수 · 실제 결제금액 기준</p></div><span class="ctdash-tag">${valid ? "PAID Purchase" : "집계 대기"}</span></div>
+      <div class="ctdash-metrics-grid ctdash-balanced-grid is-count-${otherCount ? 6 : 5}">
+        ${amounts.map(amount => metricCard(formatCurrency(amount), valid ? `${formatNumber(counts.get(amount))}건` : "대기 중", amount === 24900 ? "패키지" : "결제 완료")).join("")}
+        ${valid && otherCount ? metricCard("기타 금액", `${formatNumber(otherCount)}건`, "위 5개 금액 외 결제") : ""}
+      </div>
+      ${valid ? "" : `<div class="ctdash-callout">해당 기간 snapshot에 금액별 집계가 아직 없습니다. 백엔드 반영 후 해당 기간 snapshot을 다시 생성해야 합니다.</div>`}
+    </article>`;
+  }
+
   function renderCurrentDashEventView() {
     const detail = currentDashEventDataset();
     const summary = currentDashSelectedEventSummary();
@@ -2431,6 +2455,7 @@
               ${renderRevenueCards(summary, people, { labelPrefix: "대회", spots })}
             </div>
           </article>
+          ${renderCurrentDashPurchaseAmounts(summary)}
           <article class="ctdash-card ctdash-section ctdash-spot-section">
             <div class="ctdash-section-head"><div><div class="ctdash-kicker">Spots</div><h3>스팟별 데이터</h3></div><span class="ctdash-tag">Pending Mapping</span></div>
             <div class="ctdash-spot-grid ctdash-balanced-grid is-count-${Math.min(spots.length || 1, 12)}">
