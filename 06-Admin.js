@@ -992,6 +992,8 @@
   let currentDashReportSelectedMonthKey = monthKeyFromDateKey(todayKSTDateKey());
   let currentDashEventPeriod = "total";
   let currentDashSelectedEvent = "";
+  let currentDashEventPickerInteracting = false;
+  let currentDashEventPickerRenderPending = false;
   let currentDashSelectedWeekStart = "";
   let currentDashSelectedWeekKey = sotWeekKeyFromDateKey(yesterdayKSTDateKey());
   let currentDashSelectedDateKey = yesterdayKSTDateKey();
@@ -2015,9 +2017,22 @@
     return `${message ? `<div class="${calloutClass}">${escapeHtml(message)}</div>` : ""}${reportMarkup}${eventMarkup}`;
   }
 
+  function finishCurrentDashEventPickerInteraction(renderPending) {
+    currentDashEventPickerInteracting = false;
+    const shouldRender = currentDashEventPickerRenderPending;
+    currentDashEventPickerRenderPending = false;
+    if (renderPending && shouldRender) renderCurrentTestDashboard();
+  }
+
   function renderCurrentTestDashboard() {
     const target = document.querySelector(`[data-current-test-content="${currentDashView}"]`);
     if (!target) return;
+    // Replacing a focused native select closes its open menu before the user can choose.
+    if (currentDashView === "event-analysis" && currentDashEventPickerInteracting && target.querySelector("#ctdash_event_select")) {
+      currentDashEventPickerRenderPending = true;
+      return;
+    }
+    currentDashEventPickerRenderPending = false;
     if (currentDashView === "diary") {
       target.innerHTML = currentTestDashboardFrame(renderCurrentDashDiaryView(), "일지");
       return;
@@ -2379,10 +2394,11 @@
 
   function renderCurrentDashPurchaseAmounts(summary) {
     const amounts = [6000, 12000, 18000, 24000, 24900];
+    const totalCount = numberValue(summary, ["purchase_count"]);
     const rows = Array.isArray(summary.purchase_amount_counts) ? summary.purchase_amount_counts : null;
     const valid = rows !== null && rows.every(row =>
       Number.isFinite(Number(row.amount)) && Number.isInteger(Number(row.purchase_count)) && Number(row.purchase_count) >= 0
-    ) && rows.reduce((sum, row) => sum + Number(row.purchase_count), 0) === numberValue(summary, ["purchase_count"]);
+    ) && rows.reduce((sum, row) => sum + Number(row.purchase_count), 0) === totalCount;
     const counts = new Map(amounts.map(amount => [amount, 0]));
     let otherCount = 0;
     if (valid) rows.forEach(row => {
@@ -2391,11 +2407,14 @@
       if (counts.has(amount)) counts.set(amount, counts.get(amount) + count);
       else otherCount += count;
     });
+    const amountCard = (label, count, note) => metricCard(label,
+      valid ? `${formatNumber(count)}건` : "대기 중",
+      valid ? `${note}<br>총 ${formatNumber(totalCount)}건 중 ${formatPercent(safeRate(count, totalCount))}` : note);
     return `<article class="ctdash-card ctdash-section ctdash-wide-section">
       <div class="ctdash-section-head"><div><div class="ctdash-kicker">Purchase Amounts</div><h3>금액별 구매건수</h3><p>선택한 대회·기간의 결제 완료 건수 · 실제 결제금액 기준</p></div><span class="ctdash-tag">${valid ? "PAID Purchase" : "집계 대기"}</span></div>
       <div class="ctdash-metrics-grid ctdash-balanced-grid is-count-${otherCount ? 6 : 5}">
-        ${amounts.map(amount => metricCard(formatWon(amount), valid ? `${formatNumber(counts.get(amount))}건` : "대기 중", amount === 24900 ? "패키지" : "결제 완료")).join("")}
-        ${valid && otherCount ? metricCard("기타 금액", `${formatNumber(otherCount)}건`, "위 5개 금액 외 결제") : ""}
+        ${amounts.map(amount => amountCard(formatWon(amount), counts.get(amount), amount === 24900 ? "패키지" : "결제 완료")).join("")}
+        ${valid && otherCount ? amountCard("기타 금액", otherCount, "위 5개 금액 외 결제") : ""}
       </div>
       ${valid ? "" : `<div class="ctdash-callout">해당 기간 snapshot에 금액별 집계가 아직 없습니다. 백엔드 반영 후 해당 기간 snapshot을 다시 생성해야 합니다.</div>`}
     </article>`;
@@ -6576,6 +6595,7 @@
   };
 
   function activateAdminView(viewName) {
+    finishCurrentDashEventPickerInteraction(false);
     const groupByView = {
       events: "events",
       diary: "operations",
@@ -6631,6 +6651,26 @@
   }
 
   function bindEvents(){
+    const beginEventPickerInteraction = e => {
+      if (e.target?.id === "ctdash_event_select") currentDashEventPickerInteracting = true;
+    };
+    document.addEventListener("pointerdown", beginEventPickerInteraction, true);
+    document.addEventListener("focusin", beginEventPickerInteraction);
+    document.addEventListener("focusout", e => {
+      if (e.target?.id !== "ctdash_event_select") return;
+      currentDashEventPickerInteracting = false;
+      // Let an outside button's click finish before a deferred render can replace that button.
+      setTimeout(() => {
+        if (!currentDashEventPickerInteracting && currentDashEventPickerRenderPending) {
+          finishCurrentDashEventPickerInteraction(true);
+        }
+      }, 0);
+    });
+    document.addEventListener("keydown", e => {
+      if (e.target?.id === "ctdash_event_select" && e.key === "Escape") {
+        setTimeout(() => finishCurrentDashEventPickerInteraction(true), 0);
+      }
+    });
     document.querySelectorAll("[data-admin-group]").forEach(btn => {
       btn.addEventListener("click", () => {
         const defaultViewByGroup = { events: "events", operations: "diary", analysis: "report" };
@@ -6951,6 +6991,7 @@
         return;
       }
       if (e.target && e.target.id === "ctdash_event_select") {
+        finishCurrentDashEventPickerInteraction(false);
         currentDashSelectedEvent = e.target.value || "";
         if (!currentDashSelectedEvent) {
           clearCurrentDashEventDetailCache();
