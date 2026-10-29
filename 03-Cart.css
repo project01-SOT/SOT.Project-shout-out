@@ -20,7 +20,7 @@
   --cart-arrow-zone: 22%;
   --cart-arrow-color: rgba(255,255,255,0.70);
   --cart-arrow-color-hover: rgba(255,255,255,1);
-  --cart-acc-gap: 0px;
+  --cart-acc-gap: 16px;
   --cart-acc-radius: 18px;
   --cart-acc-border: rgba(255,255,255,0.10);
   --cart-acc-bg: rgba(255,255,255,0.06);
@@ -164,9 +164,12 @@
   background: var(--cart-acc-bg);
   border-radius: var(--cart-acc-radius);
   padding: 0 14px 14px;
-  margin-top: var(--cart-acc-gap);
+  margin-top: 0;
   position: relative;
   width: 100%;}
+.cart-event-section + .cart-event-section{
+  margin-top: var(--cart-acc-gap);
+}
 .cart-event-header{  display: flex;
   align-items: center;
   justify-content: space-between;
