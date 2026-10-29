@@ -1467,8 +1467,8 @@ onShoutCartReady(function() {
     prevOverlay.style.pointerEvents = "auto";
     nextOverlay.style.opacity = "1";
     nextOverlay.style.pointerEvents = "auto";
-    wrap.appendChild(prevOverlay);
-    wrap.appendChild(nextOverlay);
+    current.appendChild(prevOverlay);
+    current.appendChild(nextOverlay);
     prev = prevOverlay;
     next = nextOverlay;
     const thumbsWrap = document.createElement("div");
@@ -1631,73 +1631,58 @@ onShoutCartReady(function() {
       }
     }
 
-        function enableGrabScroll(scroller) {
-      if (!scroller) return;
-      if (scroller.dataset && scroller.dataset.grabScrollReady === "1") return;
-      if (scroller.dataset) scroller.dataset.grabScrollReady = "1";
-      try { scroller.dataset.grabDragged = "0"; } catch (e) { warn("silent catch: grabScroll.dataset", e); }
-
-      const DRAG_THRESHOLD_PX = 10;
-      const DRAG_SPEED = 1.2;
-
-      let isDown = false;
-      let startX = 0;
-      let startScrollLeft = 0;
+    function enableGrabScroll(scroller) {
+      if (!scroller || scroller.dataset.grabScrollReady === "1") return;
+      scroller.dataset.grabScrollReady = "1";
+      scroller.dataset.grabDragged = "0";
+      let active = null;
       let dragged = false;
-      let activePointerId = null;
-
-      function setDragging(on) {
-        scroller.classList.toggle("is-dragging", !!on);
-      }
-
-      function onPointerDown(e) {
-        if (e.pointerType === "mouse" && e.button !== 0) return;
-        isDown = true;
+      let resetTimer = null;
+      scroller.addEventListener("pointerdown", (e) => {
+        if (e.isPrimary === false || (e.pointerType === "mouse" && e.button !== 0)) return;
+        clearTimeout(resetTimer);
         dragged = false;
-        activePointerId = e.pointerId;
-        startX = e.clientX;
-        startScrollLeft = scroller.scrollLeft;
-        setDragging(true);
-        try { scroller.setPointerCapture(activePointerId); } catch (_) {}
-      }
-
-      function onPointerMove(e) {
-        if (!isDown) return;
-        if (activePointerId != null && e.pointerId !== activePointerId) return;
-        const dx = e.clientX - startX;
-        if (Math.abs(dx) > DRAG_THRESHOLD_PX) {
+        scroller.dataset.grabDragged = "0";
+        active = { id: e.pointerId, x: e.clientX, y: e.clientY,
+          scroll: scroller.scrollLeft, mouse: e.pointerType === "mouse" || e.pointerType === "pen" };
+        // A tap must retain its thumbnail target. Capture only after a real drag.
+      }, { passive: true });
+      scroller.addEventListener("pointermove", (e) => {
+        if (!active || e.pointerId !== active.id) return;
+        const dx = e.clientX - active.x;
+        const dy = e.clientY - active.y;
+        if (!dragged && Math.abs(dx) > 10 && Math.abs(dx) > Math.abs(dy)) {
           dragged = true;
-          try { scroller.dataset.grabDragged = "1"; } catch (e) { warn("silent catch: grabScroll.dataset", e); }
+          scroller.dataset.grabDragged = "1";
+          if (active.mouse) {
+            scroller.classList.add("is-dragging");
+            try { scroller.setPointerCapture(active.id); } catch (_) {}
+          }
         }
-        if (!dragged) return;
+        // Touch uses the native pan-x scroller; do not compete with its scrolling.
+        if (!dragged || !active.mouse) return;
         e.preventDefault();
-        scroller.scrollLeft = startScrollLeft - dx * DRAG_SPEED;
-      }
-
-      function endPointer(e) {
-        if (!isDown) return;
-        if (activePointerId != null && e.pointerId !== activePointerId) return;
-        isDown = false;
-        setDragging(false);
-        try { scroller.releasePointerCapture(activePointerId); } catch (_) {}
-        activePointerId = null;
-
-        setTimeout(() => {
+        scroller.scrollLeft = active.scroll - dx * 1.2;
+      }, { passive: false });
+      function end(e) {
+        if (!active || e.pointerId !== active.id) return;
+        try { scroller.releasePointerCapture(active.id); } catch (_) {}
+        active = null;
+        scroller.classList.remove("is-dragging");
+        resetTimer = setTimeout(() => {
           dragged = false;
-          try { scroller.dataset.grabDragged = "0"; } catch (_) {}
-        }, 0);
+          scroller.dataset.grabDragged = "0";
+        }, 400);
       }
-
-      scroller.addEventListener("pointerdown", onPointerDown, { passive: true });
-      scroller.addEventListener("pointermove", onPointerMove, { passive: false });
-      scroller.addEventListener("pointerup", endPointer, { passive: true });
-      scroller.addEventListener("pointercancel", endPointer, { passive: true });
-      scroller.addEventListener("pointerleave", endPointer, { passive: true });
-
+      scroller.addEventListener("pointerup", end, { passive: true });
+      scroller.addEventListener("pointercancel", end, { passive: true });
+      scroller.addEventListener("pointerleave", (e) => {
+        if (!dragged) end(e);
+      }, { passive: true });
       scroller.addEventListener("click", (e) => {
         if (!dragged) return;
         e.preventDefault();
-        e.stopPropagation();
+        e.stopImmediatePropagation();
       }, true);
     }
 
@@ -1719,7 +1704,9 @@ function renderThumbs() {
       ensureThumbVisible(ui.thumbs, activeEl, 10);
     } catch (e3) {}
 
+    let previewRenderGeneration = 0;
     function renderCurrent() {
+      previewRenderGeneration += 1;
       const it = list[idx];
       const u = normalizeUrl(it && it.preview_url);
       ui.current.style.backgroundImage = u ? `url("${u}")` : "none";
@@ -1936,71 +1923,72 @@ function renderThumbs() {
         if (wrap && wrap.style.display !== "none") applySwipeSizes();
       });
 
-      host.addEventListener("touchstart", (ev) => {
-        if (animating) return;
-        if (!list || list.length === 0) return;
-        const t = ev.touches && ev.touches[0];
-        if (!t) return;
+      let suppressClickUntil = 0;
+      let mousePointer = null;
 
-        ensureSwipeDom();
-        preloadPanels(idx);
-        hideHostBg();
-        wrap.style.display = "block";
-        applySwipeSizes();
-        snapToCenterIdle();
-
-        startX = t.clientX;
-        startY = t.clientY;
-        dx = 0;
-        dy = 0;
+      function startGesture(x, y) {
+        if (animating || !list || list.length < 2) return false;
+        startX = x;
+        startY = y;
+        dx = dy = 0;
         axisLocked = null;
         dragging = true;
+        suppressClickUntil = 0;
+        return true;
+      }
 
-        const w = getViewportW();
-        setTrackPx(-w, false);
-      }, { passive: true });
-
-      host.addEventListener("touchmove", (ev) => {
+      function moveGesture(x, y, ev) {
         if (!dragging) return;
-        const t = ev.touches && ev.touches[0];
-        if (!t) return;
-
-        dx = t.clientX - startX;
-        dy = t.clientY - startY;
-
-        if (!axisLocked) axisLocked = (Math.abs(dx) > Math.abs(dy)) ? "x" : "y";
-
-        if (axisLocked === "y") {
-          if (Math.abs(dy) > MAX_Y && Math.abs(dy) > Math.abs(dx)) {
-            dragging = false;
-            animating = true;
-            hideOverlay();
-            setTimeout(() => { animating = false; }, ANIM_MS + 40);
+        dx = x - startX;
+        dy = y - startY;
+        if (!axisLocked) {
+          if (Math.max(Math.abs(dx), Math.abs(dy)) <= TAP_SLOP) return;
+          axisLocked = Math.abs(dx) > Math.abs(dy) ? "x" : "y";
+          if (axisLocked === "y") { dragging = false; return; }
+          ensureSwipeDom();
+          preloadPanels(idx);
+          hideHostBg();
+          wrap.style.display = "block";
+          applySwipeSizes();
+          if (mousePointer !== null) {
+            try { host.setPointerCapture(mousePointer); } catch (_) {}
           }
-          return;
         }
+        if (axisLocked !== "x") return;
+        if (ev.cancelable !== false) ev.preventDefault();
+        setTrackPx(-getViewportW() + dx, false);
+      }
 
-        ev.preventDefault();
-        const w = getViewportW();
-        setTrackPx(-w + dx, false);
+      host.addEventListener("touchstart", (ev) => {
+        if (!ev.touches || ev.touches.length !== 1) { cancelGesture(); return; }
+        startGesture(ev.touches[0].clientX, ev.touches[0].clientY);
+      }, { passive: true });
+      host.addEventListener("touchmove", (ev) => {
+        if (!ev.touches || ev.touches.length !== 1) { cancelGesture(); return; }
+        moveGesture(ev.touches[0].clientX, ev.touches[0].clientY, ev);
       }, { passive: false });
 
       function finishSwipe(nextDir) {
+        const generation = previewRenderGeneration;
         const w = getViewportW();
         animating = true;
         setTrackPx(-w + (nextDir * w), true);
         setTimeout(() => {
           animating = false;
-          if (nextDir < 0 && idx < list.length - 1) idx += 1;
-          else if (nextDir > 0 && idx > 0) idx -= 1;
-          renderCurrent();
+          if (previewRenderGeneration === generation) {
+            if (nextDir < 0 && idx < list.length - 1) idx += 1;
+            else if (nextDir > 0 && idx > 0) idx -= 1;
+            renderCurrent();
+          }
           hideOverlay();
         }, ANIM_MS + 40);
       }
 
-      host.addEventListener("touchend", () => {
+      function endGesture() {
         if (!dragging) return;
         dragging = false;
+        if (axisLocked !== "x") return;
+        suppressClickUntil = Date.now() + 400;
         if (!list || list.length === 0) { hideOverlay(); return; }
 
         const w = getViewportW();
@@ -2049,9 +2037,9 @@ function renderThumbs() {
           }
           finishSwipe(1);
         }
-      }, { passive: true });
+      }
 
-      host.addEventListener("touchcancel", () => {
+      function cancelGesture() {
         if (!dragging) return;
         dragging = false;
         animating = true;
@@ -2061,7 +2049,35 @@ function renderThumbs() {
           animating = false;
           hideOverlay();
         }, ANIM_MS + 40);
+      }
+      host.addEventListener("touchend", endGesture, { passive: true });
+      host.addEventListener("touchcancel", cancelGesture, { passive: true });
+      host.addEventListener("pointerdown", (ev) => {
+        if (ev.pointerType !== "mouse" && ev.pointerType !== "pen") return;
+        if (ev.button !== 0 || ev.target.closest("button")) return;
+        if (startGesture(ev.clientX, ev.clientY)) mousePointer = ev.pointerId;
       }, { passive: true });
+      host.addEventListener("pointermove", (ev) => {
+        if (ev.pointerId !== mousePointer) return;
+        moveGesture(ev.clientX, ev.clientY, ev);
+      }, { passive: false });
+      function finishPointer(ev, cancelled) {
+        if (ev.pointerId !== mousePointer) return;
+        if (cancelled) cancelGesture(); else endGesture();
+        try { host.releasePointerCapture(mousePointer); } catch (_) {}
+        mousePointer = null;
+      }
+      host.addEventListener("pointerup", (ev) => finishPointer(ev, false), { passive: true });
+      host.addEventListener("pointercancel", (ev) => finishPointer(ev, true), { passive: true });
+      host.addEventListener("pointerleave", () => {
+        if (axisLocked !== "x") { dragging = false; mousePointer = null; }
+      }, { passive: true });
+      host.addEventListener("click", (ev) => {
+        if (Date.now() >= suppressClickUntil) return;
+        ev.preventDefault();
+        ev.stopImmediatePropagation();
+      }, true);
+
     }
 
     function setupPerEventThumbNav() {
@@ -2071,31 +2087,12 @@ function renderThumbs() {
 
       if (!thumbRowEl.dataset.thumbClickBound) {
         thumbRowEl.dataset.thumbClickBound = "1";
-        let __lastDownIdx = -1;
-        let __lastDownTs = 0;
-
-        thumbRowEl.addEventListener("pointerdown", (e) => {
-          const th = e.target && e.target.closest ? e.target.closest(".cart-thumb") : null;
-          if (!th) return;
-          const di = th.getAttribute("data-thumb-idx");
-          const ni = Number(di);
-          if (!Number.isFinite(ni)) return;
-          __lastDownIdx = ni;
-          __lastDownTs = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
-        }, true);
-
         thumbRowEl.addEventListener("click", (e) => {
           if (thumbRowEl.dataset.grabDragged === "1") return;
 
-          let ni = -1;
           const th = e.target && e.target.closest ? e.target.closest(".cart-thumb") : null;
-          if (th) {
-            const di = th.getAttribute("data-thumb-idx");
-            ni = Number(di);
-          } else {
-            const now = (typeof performance !== "undefined" && performance.now) ? performance.now() : Date.now();
-            if (__lastDownIdx >= 0 && (now - __lastDownTs) < 500) ni = __lastDownIdx;
-          }
+          if (!th || !thumbRowEl.contains(th)) return;
+          const ni = Number(th.getAttribute("data-thumb-idx"));
 
           if (!Number.isFinite(ni) || ni < 0 || ni >= list.length) return;
 

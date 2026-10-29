@@ -237,6 +237,8 @@
   padding: 14px;
 }
 .cart-preview-current{
+  position: relative;
+  touch-action: pan-y;
   width: auto;
   aspect-ratio: 1 / 1;
   border-radius: 12px;
