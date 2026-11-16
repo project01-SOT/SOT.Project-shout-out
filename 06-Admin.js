@@ -1543,8 +1543,8 @@
   function createBrowserPhotoUpload(panel, batchId, repair) {
     panel.classList.add("sot-photo-tools");
     panel.innerHTML = `
-      <div class="sot-photo-box">
-        <h2>사진 업로드</h2>
+      <div class="sot-photo-upload-job">
+        <h4 data-web-upload="title">원본 사진</h4>
         <div class="sot-photo-row">
           <label class="sot-photo-field">대회<select class="sh-select" data-web-upload="event"></select></label>
           <button type="button" class="sh-btn" data-web-upload="choose">폴더 선택</button>
@@ -1559,18 +1559,18 @@
             <input class="sh-input" data-web-upload="last" type="text" inputmode="numeric"></label>
         </div>
         <p data-web-upload="range-message"></p>
+        <p data-web-upload="rate"></p>
+        <div class="sot-photo-meter">
+          <progress data-web-upload="progress" hidden aria-label="사진 업로드 진행률"></progress>
+          <span data-web-upload="count"></span>
+        </div>
         <div class="sot-photo-row">
           <button type="button" class="sh-btn" data-web-upload="start">업로드 시작</button>
           <button type="button" class="sh-btn" data-web-upload="pause" hidden>일시정지</button>
           <button type="button" class="sh-btn" data-web-upload="stop" hidden>중지</button>
           <button type="button" class="sh-btn" data-web-upload="discard" hidden>작업 목록에서 제거</button>
         </div>
-        <div class="sot-photo-row">
-          <progress data-web-upload="progress" hidden></progress>
-          <span data-web-upload="count"></span>
-        </div>
         <p data-web-upload="message" role="status"></p>
-        <p data-web-upload="rate"></p>
         <details class="sot-photo-log" data-web-upload="logs" hidden><summary>전송 로그</summary><pre></pre></details>
         <details class="sot-photo-log" data-web-upload="issues" hidden><summary>확인할 사진</summary><pre></pre></details>
       </div>`;
@@ -1652,6 +1652,9 @@
       control("range-message").textContent = rangeMessage;
       const total = unfinished || !selection ? job?.files.length || 0 : selectedCount;
       const found = selection?.folder || job?.folder || "";
+      const event = control("event");
+      const eventName = event.value ? event.selectedOptions[0]?.textContent : "";
+      control("title").textContent = [eventName, found].filter(Boolean).join(" · ") || "원본 사진";
       control("folder").textContent = found ? found + " · " + total.toLocaleString("ko-KR") + "장" : "컴퓨터나 연결된 NAS의 사진 폴더를 선택하세요.";
       control("event").disabled = loading || running || !!unfinished || !!repair;
       control("choose").disabled = loading || pickerOpen || running || (!!repair && !job);
@@ -2141,7 +2144,7 @@
 
   function createPhotoToolView(panel, name, markup, scope) {
     panel.innerHTML = '<div class="sot-photo-box"><h2>' + name + '</h2>' +
-      (scope ? '<div class="sot-photo-row"><button class="sh-btn" type="button" data-tool="login">Google 로그인</button><span data-tool="account"></span></div>' : "") +
+      (scope ? '<div class="sot-photo-row sot-photo-account"><span data-tool="account"></span><button class="sh-btn" type="button" data-tool="login">Google 로그인</button></div>' : "") +
       markup + '<p role="status" data-tool="status"></p><details class="sot-photo-log" data-tool="log" hidden><summary>작업 로그</summary><pre></pre></details></div>';
     const field = name => panel.querySelector('[data-tool="' + name + '"]');
     let loading = false;
@@ -2623,7 +2626,8 @@
   function createWebDrive(panel) {
     const ui = createPhotoToolView(panel, "Drive 업로드",
       '<div class="sot-photo-row">' + photoToolButton("home", "내 드라이브") + photoToolButton("shared", "공유 드라이브") +
-      photoToolButton("back", "상위 폴더") + '<label class="sot-photo-field">폴더 URL 또는 ID<input class="sh-input" data-tool="link"></label>' +
+      photoToolButton("back", "상위 폴더") + '</div>' +
+      '<div class="sot-photo-row"><label class="sot-photo-field">폴더 URL 또는 ID<input class="sh-input" data-tool="link"></label>' +
       photoToolButton("open", "열기") + '</div><p data-tool="folder-name"></p><div class="sot-photo-row" data-tool="folders"></div>' +
       '<div class="sot-photo-row">' + photoToolButton("choose", "이 폴더 선택") +
       '<label class="sot-photo-field">새 폴더 이름<input class="sh-input" data-tool="new-name"></label>' + photoToolButton("new", "새 폴더") +
@@ -3173,11 +3177,14 @@
   }
 
   function createBrowserUploadSuite(panel) {
-    panel.innerHTML = '<div class="sot-photo-row"><button type="button" class="sh-btn" data-batch="add">+ 업로드 건 추가</button>' +
-      '<button type="button" class="sh-btn" data-batch="start">전체 시작·재개</button>' +
+    panel.innerHTML = '<section class="sot-photo-box"><h2>사진 업로드</h2><h3>전체 업로드 제어</h3>' +
+      '<div class="sot-photo-row"><button type="button" class="sh-btn" data-batch="start">전체 시작·재개</button>' +
       '<button type="button" class="sh-btn" data-batch="pause">전체 일시정지</button>' +
       '<button type="button" class="sh-btn" data-batch="stop">전체 중지</button></div>' +
-      '<p data-batch="status" role="status"></p><div data-batch="cards"></div><details data-batch="cloud"><summary>클라우드 업로드 확인 · 누락 복구</summary><div data-batch="coverage"></div></details>';
+      '<p data-batch="status" role="status"></p></section>' +
+      '<details class="sot-photo-box sot-photo-coverage" data-batch="cloud"><summary>클라우드 업로드 확인 · 누락 복구</summary><div data-batch="coverage"></div></details>' +
+      '<section class="sot-photo-box"><h3>업로드 작업</h3><div data-batch="cards"></div>' +
+      '<div class="sot-photo-row"><button type="button" class="sh-btn" data-batch="add">+ 업로드 건 추가</button></div></section>';
     const get = name => panel.querySelector('[data-batch="' + name + '"]');
     const owner = window.ShoutAuth.getUserId();
     const key = "batch-index:" + owner;
@@ -3291,46 +3298,74 @@
 
   function createPhotoUploader(panel) {
     const menu = [
-      { key: "upload", title: "사진 업로드", create: createBrowserUploadSuite },
-      { key: "downloads", title: "다운로드", create: createWebDownload },
-      { key: "privacy", title: "프리뷰 비공개", create: createWebPrivacy },
-      { key: "drive", title: "Drive 업로드", create: createWebDrive },
-      { key: "rename", title: "파일명 변경", create: createWebRename }
+      { key: "upload", title: "사진 업로드", create: createBrowserUploadSuite,
+        icon: '<rect x="5" y="10" width="14" height="11" rx="3"/><path d="M12 15V3m-4 4 4-4 4 4"/>' },
+      { key: "downloads", title: "다운로드", create: createWebDownload,
+        icon: '<rect x="5" y="10" width="14" height="11" rx="3"/><path d="M12 3v13m-4-4 4 4 4-4"/>' },
+      { key: "privacy", title: "프리뷰 비공개", create: createWebPrivacy,
+        icon: '<path d="M3 3l18 18M10.6 5.1A10.9 10.9 0 0 1 12 5c5.2 0 9 4.6 10 7a14 14 0 0 1-3 4M6.4 6.4A15 15 0 0 0 2 12c1 2.4 4.8 7 10 7a10 10 0 0 0 5.1-1.4M9.9 9.9a3 3 0 0 0 4.2 4.2"/>' },
+      { key: "drive", title: "Drive 업로드", create: createWebDrive,
+        icon: '<path d="M4 12l2.5-6A2 2 0 0 1 8.3 5h7.4a2 2 0 0 1 1.8 1l2.5 6m-16 0h16a1 1 0 0 1 1 1v5a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1v-5a1 1 0 0 1 1-1zm12 3.5h2m-11 0h.1"/>' },
+      { key: "rename", title: "파일명 변경", create: createWebRename,
+        icon: '<path d="M13 20h8M4 16 15.8 4.2a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4zm10-10 3 3"/>' }
     ];
-    panel.classList.add("sot-photo-tools");
+    panel.classList.add("sot-photo-tools", "sot-photo-app");
     panel.innerHTML = `
-      <nav class="sot-photo-row sot-photo-nav" aria-label="SOT 포토 업로더 기능"></nav>
-      <div class="sot-photo-content" data-uploader-views></div>`;
-    const navigation = panel.querySelector("nav");
+      <div class="sot-photo-home">
+        <h2>샤라웃[SOT] 사진 업로드</h2>
+        <nav class="sot-photo-nav" aria-label="SOT 포토 업로더 기능"></nav>
+      </div>
+      <div class="sot-photo-content" data-uploader-views hidden>
+        <button class="sh-btn sot-photo-back" type="button">
+          <svg width="14" height="14" viewBox="0 0 16 16" aria-hidden="true"><path d="m10 3-5 5 5 5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+          기능 선택
+        </button>
+      </div>`;
+    const home = panel.querySelector(".sot-photo-home");
+    const navigation = home.querySelector("nav");
     const views = panel.querySelector("[data-uploader-views]");
+    const back = views.querySelector(".sot-photo-back");
     const entries = menu.map(item => {
       const button = document.createElement("button");
       button.type = "button";
-      button.className = "sh-btn";
-      button.textContent = item.title;
+      button.className = "sot-photo-tile";
+      button.innerHTML = '<svg viewBox="0 0 24 24" aria-hidden="true">' + item.icon + '</svg><span>' + item.title + '</span>';
       const view = document.createElement("div");
-      button.addEventListener("click", () => show(item.key));
+      view.hidden = true;
+      view.tabIndex = -1;
+      view.setAttribute("role", "region");
+      view.setAttribute("aria-label", item.title);
+      button.addEventListener("click", () => {
+        show(item.key);
+        view.focus();
+      });
       navigation.append(button);
       views.append(view);
       return { ...item, button, view, controller: null };
     });
-    let selected = "upload";
+    let selected = null;
     let active = false;
 
     function show(key) {
       selected = key;
+      home.hidden = key !== null;
+      views.hidden = key === null;
       for (const entry of entries) {
         const visible = entry.key === selected;
+        // Restore interrupted uploads even while the feature picker is visible.
+        const activate = active && (visible || entry.key === "upload");
         entry.view.hidden = !visible;
-        entry.button.classList.toggle("is-active", visible);
-        entry.button.setAttribute("aria-pressed", String(visible));
-        if (visible && !entry.controller) {
+        if (activate && !entry.controller) {
           entry.controller = entry.create(entry.view);
         }
-        entry.controller?.setActive(active && visible);
+        entry.controller?.setActive(activate);
       }
     }
-    show(selected);
+    back.addEventListener("click", () => {
+      const previous = entries.find(entry => entry.key === selected);
+      show(null);
+      previous?.button.focus();
+    });
     return {
       refreshEvents() { entries.forEach(entry => entry.controller?.refreshEvents()); },
       setActive(value) { active = value; show(selected); }
