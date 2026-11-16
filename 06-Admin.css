@@ -2250,7 +2250,24 @@
 .sot-photo-field textarea { width: 100%; resize: vertical; }
 .sot-photo-field input[type="checkbox"] { width: 1.05rem; height: 1.05rem; margin: 0 0 9px; }
 .sot-photo-nav { margin: 18px 0 0; padding-bottom: 13px; border-bottom: 1px solid rgba(115, 133, 161, .34); }
-.sot-photo-nav .is-active { outline: 2px solid currentColor; outline-offset: -2px; }
+.sot-photo-nav > .sh-btn {
+  background: rgba(33, 24, 18, .08);
+  color: var(--sh-muted);
+  box-shadow: none;
+}
+.sot-photo-nav > .sh-btn[aria-pressed="false"]:hover {
+  background: rgba(33, 24, 18, .14);
+  color: var(--sh-ink);
+}
+.sot-photo-nav > .sh-btn[aria-pressed="true"] {
+  background: linear-gradient(135deg, #a94e25, #8f3c19);
+  color: #fff;
+  box-shadow: inset 0 -3px 0 rgba(33, 24, 18, .28);
+}
+.sot-photo-nav > .sh-btn:focus-visible {
+  outline: 2px solid #854421;
+  outline-offset: 3px;
+}
 .sot-photo-content { padding-top: 16px; }
 .sot-photo-job { border: 1px solid rgba(115, 133, 161, .34); border-radius: 12px; padding: 13px; margin: 10px 0; }
 .sot-photo-job form input:not([type="checkbox"]) { width: 6rem; }
