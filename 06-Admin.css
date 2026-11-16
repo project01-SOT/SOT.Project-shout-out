@@ -2233,3 +2233,28 @@
       gap:8px;
     }
   }
+
+/* SOT Photo Uploader */
+.sot-photo-tools [hidden] { display: none !important; }
+.sot-photo-box {
+  padding: clamp(16px, 3vw, 28px);
+  border: 1px solid rgba(115, 133, 161, .34);
+  border-radius: 18px;
+}
+.sot-photo-box h2, .sot-photo-box h3, .sot-photo-box h4 { margin: 0 0 8px; }
+.sot-photo-box p { margin: 6px 0; overflow-wrap: anywhere; }
+.sot-photo-box [role="status"] { margin: 8px 0 14px; }
+.sot-photo-row { display: flex; align-items: end; flex-wrap: wrap; gap: 8px; margin: 9px 0; }
+.sot-photo-field { display: grid; gap: 4px; min-width: 0; }
+.sot-photo-field :is(.sh-input, .sh-select) { max-width: 100%; }
+.sot-photo-field textarea { width: 100%; resize: vertical; }
+.sot-photo-field input[type="checkbox"] { width: 1.05rem; height: 1.05rem; margin: 0 0 9px; }
+.sot-photo-nav { margin: 18px 0 0; padding-bottom: 13px; border-bottom: 1px solid rgba(115, 133, 161, .34); }
+.sot-photo-nav .is-active { outline: 2px solid currentColor; outline-offset: -2px; }
+.sot-photo-content { padding-top: 16px; }
+.sot-photo-job { border: 1px solid rgba(115, 133, 161, .34); border-radius: 12px; padding: 13px; margin: 10px 0; }
+.sot-photo-job form input:not([type="checkbox"]) { width: 6rem; }
+.sot-photo-tools progress { width: min(260px, 100%); align-self: center; }
+.sot-photo-log { margin: 8px 0; }
+.sot-photo-log pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 17rem; overflow: auto; }
+.sot-photo-tools .sh-btn:disabled { opacity: .45; cursor: default; }

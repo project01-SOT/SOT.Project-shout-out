@@ -1482,6 +1482,445 @@
     }
   }
 
+  const photoToolsURL = "http://127.0.0.1:18765/v1";
+  const photoToolsKey = "sot_admin_photo_companion";
+  let photoToolsPanel;
+
+  function createPhotoTools(panel) {
+    const titles = {
+      upload: "사진 업로드", purchase: "구매 사진 다운로드", download: "URL 다운로드",
+      privacy: "프리뷰 비공개", drive: "Drive 업로드", rename: "파일명 변경"
+    };
+    const $photo = name => panel.querySelector('[data-photo-field="' + name + '"]');
+    const field = name => $photo(name).value;
+    const esc = escapeHtml;
+    const disabled = condition => condition ? " disabled" : "";
+    const button = (label, action, { id = "", value = "", off = false } = {}) =>
+      '<button type="button" class="sh-btn" data-photo-action="' + action + '" data-photo-id="' + esc(id) +
+      '" data-photo-value="' + esc(value) + '"' + disabled(off) + '>' + esc(label) + '</button>';
+    const slot = name => '<div data-photo-field="' + name + '"></div>';
+    const select = (name, options = "") => '<select class="sh-select" data-photo-field="' + name + '">' + options + '</select>';
+    const input = (name, type = "text", attrs = "") => '<input class="sh-input" type="' + type + '" data-photo-field="' + name + '" ' + attrs + '>';
+    const label = (title, control) => '<label class="sot-photo-field"><span>' + title + '</span>' + control + '</label>';
+    const eventSelect = name => label("대회", select(name, '<option value="">대회 선택</option>'));
+    const row = content => '<div class="sot-photo-row">' + content + '</div>';
+    const progress = (done, total) => total > 0
+      ? '<progress max="' + total + '" value="' + Math.min(done, total) + '"></progress><span>' +
+        done.toLocaleString("ko-KR") + ' / ' + total.toLocaleString("ko-KR") + '</span>' : "";
+    const logs = (lines, title = "전송 로그") => lines.length
+      ? '<details class="sot-photo-log"><summary>' + esc(title) + '</summary><pre>' + esc(lines.join("\n")) + '</pre></details>' : "";
+    const details = (value, title) => value ? logs([value], title) : "";
+    const bytes = size => (size >= 1e9 ? (size / 1e9).toFixed(2) + " GB" : (size / 1e6).toFixed(1) + " MB");
+    const section = (name, content) => '<div class="sot-photo-content" data-photo-section="' + name + '" hidden><h3>' +
+      titles[name] + '</h3>' + content + '</div>';
+
+    panel.classList.add("sot-photo-tools");
+    panel.innerHTML =
+      '<div class="sot-photo-box">' +
+        '<h2>SOT 포토 업로더</h2><div data-photo-field="message" role="status"></div>' +
+        '<div data-photo-field="pair">' +
+          '<p>이 Mac에서 <strong>SOT 포토 업로더 연결</strong>을 실행하고 연결 코드를 복사하세요.</p>' +
+          row(label("Mac 연결 코드", input("code", "password", 'autocomplete="off" spellcheck="false" maxlength="48"')) +
+            button("연결", "pair")) +
+        '</div>' +
+        '<div data-photo-field="connected" hidden>' +
+          row(slot("login") + button("Google 로그인", "google.login") + button("재인증 후 재개", "google.resume") +
+            button("대회 목록 새로고침", "events.reload") + button("연결 해제", "disconnect")) +
+          slot("eventStatus") +
+          '<nav class="sot-photo-row sot-photo-nav" aria-label="사진 도구">' +
+            Object.entries(titles).map(([key, title]) => button(title, "tool", { value: key })).join("") +
+          '</nav>' +
+          section("upload", row(eventSelect("uploadEvent")) + slot("uploadStatus") + slot("uploadControls") +
+            slot("uploadRows") + slot("coverage")) +
+          section("purchase", row(eventSelect("purchaseEvent") +
+            label("구매 상태", select("purchaseKind", '<option value="PAID">구매 완료</option><option value="READY">준비</option>')) +
+            label("시작일 (한국시간)", input("purchaseStart", "date")) +
+            label("종료 시각 (한국시간)", input("purchaseEnd", "datetime-local")) +
+            label("현재 시점까지", input("purchaseNow", "checkbox", "checked"))) +
+            row(button("Mac 저장 위치 선택", "purchase.folder") + button("다운로드", "purchase.start")) + slot("purchaseState")) +
+          section("download", label("사진 URL 또는 GCS 경로",
+              '<textarea class="sh-input" data-photo-field="urls" rows="4" spellcheck="false"></textarea>') +
+            row(button("Mac 저장 위치 선택", "download.folder") + button("다운로드", "download.start")) + slot("downloadState")) +
+          section("privacy", row(eventSelect("privacyEvent") +
+            label("배번호", input("bibs", "text", 'placeholder="예: 123, 205" autocomplete="off"'))) +
+            row(button("사진 찾기", "privacy.search") + button("프리뷰 전체 비공개", "privacy.apply")) + slot("privacyState")) +
+          section("drive", row(label("계정", select("driveAccount")) +
+            button("계정 새로고침", "drive.reload") + button("계정 변경", "drive.connect") +
+            button("재인증 후 재개", "drive.resumeAuth")) +
+            row(button("내 드라이브", "drive.home") + button("공유 드라이브", "drive.shared") + button("상위 폴더", "drive.back") +
+              label("폴더 URL 또는 ID", input("driveLink")) + button("열기", "drive.link")) +
+            row(button("이 폴더 선택", "drive.choose") + button("새 폴더", "drive.newFolder") +
+              button("Mac 원본 폴더 추가", "drive.add")) + slot("driveFolders") + slot("driveRows")) +
+          section("rename", row(button("Mac 폴더 선택", "rename.folder") +
+            label("변경 방식", select("renameMode", ["앞자리 변경", "일괄 넘버링", "문자 바꾸기"]
+              .map(mode => '<option>' + mode + '</option>').join("")))) +
+            row(label("찾을 글자", input("renameFind")) + label("바꿀 글자", input("renameReplacement")) +
+                label("공통 이름", input("renameBase")) + label("시작 번호", input("renameStart", "number", 'value="1"')) +
+                label("자릿수", input("renameWidth", "number", 'value="3"'))) +
+            row(button("미리보기", "rename.preview") + button("파일명 변경", "rename.apply") +
+              button("마지막 변경 되돌리기", "rename.undo")) + slot("renameState")) +
+        '</div>' +
+      '</div>';
+
+    let token = "";
+    try { token = sessionStorage.getItem(photoToolsKey) || ""; } catch (_) {}
+    let active = false;
+    let tool = "upload";
+    let state;
+    let timer;
+    let connected = false;
+    let fetching = false;
+    let mutating = false;
+    let requestVersion = 0;
+    let initialState = true;
+    const previousHTML = new Map();
+
+    function showMessage(text) { $photo("message").textContent = text; }
+    function setConnected(value) {
+      connected = value;
+      $photo("pair").hidden = value;
+      $photo("connected").hidden = !value;
+    }
+    function optionList(name, values, selected) {
+      const control = $photo(name);
+      const old = control.value;
+      const html = '<option value="">선택</option>' + values.map(([id, label]) =>
+        '<option value="' + esc(id) + '">' + esc(label) + '</option>').join("");
+      if (html !== previousHTML.get(name)) {
+        control.innerHTML = html;
+        previousHTML.set(name, html);
+      }
+      const value = selected === undefined ? old : selected;
+      if (control.value !== value) control.value = value;
+    }
+    function put(name, html) {
+      const element = $photo(name);
+      if (html === previousHTML.get(name)) return;
+      const focused = element.contains(document.activeElement) ? document.activeElement : null;
+      if (focused?.matches("input, textarea, select")) return;
+      const previousDetails = Array.from(element.querySelectorAll("details"), detail => detail.open);
+      const previousButtons = Array.from(element.querySelectorAll("button"));
+      const focusedIndex = previousButtons.indexOf(focused);
+      element.innerHTML = html;
+      element.querySelectorAll("details").forEach((detail, index) => { detail.open = !!previousDetails[index]; });
+      if (focusedIndex >= 0) {
+        const replacement = element.querySelectorAll("button")[focusedIndex];
+        if (replacement?.outerHTML === focused.outerHTML) replacement.focus({ preventScroll: true });
+      }
+      previousHTML.set(name, html);
+    }
+    function setDisabled(action, value) {
+      const element = panel.querySelector('[data-photo-action="' + action + '"]');
+      if (element) element.disabled = value;
+    }
+    function showTool(value) {
+      if (!Object.hasOwn(titles, value)) return;
+      tool = value;
+      panel.querySelectorAll("[data-photo-section]").forEach(section => { section.hidden = section.dataset.photoSection !== tool; });
+      panel.querySelectorAll('[data-photo-action="tool"]').forEach(tab => {
+        const selected = tab.dataset.photoValue === tool;
+        tab.classList.toggle("is-active", selected);
+        tab.setAttribute("aria-pressed", String(selected));
+      });
+      if (state) render(state);
+      if (tool === "drive" && state && !state.drive.busy && !state.drive.accounts.length && !state.drive.status) {
+        void perform("drive.reload");
+      }
+    }
+
+    function uploadCard(job, sourceCount) {
+      const busy = ["running", "paused", "stopping"].includes(job.phase);
+      const options = job.repair ? "" : '<form class="sot-photo-row" data-photo-range="' + esc(job.id) + '">' +
+        '<label>번호 범위 <input type="checkbox" name="enabled"' + (job.range ? " checked" : "") + disabled(busy) + '></label>' +
+        '<label>시작 <input class="sh-input" name="start" inputmode="numeric" value="' + esc(job.start) + '"' + disabled(busy) + '></label>' +
+        '<label>끝 <input class="sh-input" name="end" inputmode="numeric" value="' + esc(job.end) + '"' + disabled(busy) + '></label>' +
+        '<button class="sh-btn" type="submit"' + disabled(busy) + '>범위 적용</button></form>';
+      return '<article class="sot-photo-job"><h4>' + esc(job.title) + '</h4><p>' + esc(job.folder || "Mac 원본 폴더를 선택하세요.") + '</p>' +
+        '<p>' + esc(job.status) + ' · ' + job.total + '장 · ' + bytes(job.bytes) + '</p>' +
+        row(progress(job.progress, job.total) + '<span>' + esc([job.speed, job.recent, job.eta].filter(Boolean).join(" · ")) + '</span>') +
+        options + row(button("Mac 폴더 선택", "upload.folder", { id: job.id, off: busy }) +
+          button("시작", "upload.start", { id: job.id, off: !job.startable }) +
+          button("일시정지", "upload.pause", { id: job.id, off: job.phase !== "running" }) +
+          button("재개", "upload.resume", { id: job.id, off: job.phase !== "paused" || !state.upload.resume }) +
+          button("중지", "upload.stop", { id: job.id, off: !busy || job.phase === "stopping" }) +
+          button("삭제", "upload.remove", { id: job.id, off: busy || sourceCount < 2 })) + logs(job.log) + '</article>';
+    }
+    function driveCard(job, busy, authNeeded) {
+      return '<article class="sot-photo-job"><h4>' + esc(job.target) + '</h4><p>' + esc(job.folder) + '</p><p>' + esc(job.status) +
+        ' · ' + bytes(job.bytes) + '</p>' + row(progress(job.progress, job.total) +
+        '<span>' + esc([job.speed, job.recent, job.eta].filter(Boolean).join(" · ")) + '</span>') +
+        row(button(job.phase === "paused" ? "재개" : "시작", "drive.start", { id: job.id, off: busy || authNeeded || job.phase === "done" }) +
+          button("일시정지", "drive.pause", { id: job.id, off: job.phase !== "running" }) +
+          button("중지", "drive.stop", { id: job.id, off: !["running", "pausing", "paused"].includes(job.phase) }) +
+          button("실패 파일만 재시도", "drive.retry", { id: job.id, off: busy || authNeeded || !job.retry }) +
+          button("같은 이름 조회", "drive.duplicates", { id: job.id, off: busy }) +
+          button("삭제", "drive.remove", { id: job.id, off: ["running", "pausing", "paused", "stopping"].includes(job.phase) })) +
+        '<p>' + esc(job.duplicates) + '</p>' + details(job.duplicateDetails, "중복 조회 결과") +
+        logs(job.errors, "실패 파일") + logs(job.log) + '</article>';
+    }
+    function transferMarkup(item) {
+      return '<p>' + esc(item.folder) + '</p><p>' + esc(item.status) + '</p>' +
+        row(progress(item.progress, item.total) + '<span>' + esc([item.speed, item.eta].filter(Boolean).join(" · ")) + '</span>') + logs(item.log);
+    }
+    function syncPurchaseButtons() {
+      setDisabled("purchase.folder", state.purchase.busy || !field("purchaseEvent"));
+      setDisabled("purchase.start", state.purchase.busy || !state.purchase.folder || field("purchaseEvent") !== state.purchase.event);
+      $photo("purchaseEnd").disabled = $photo("purchaseNow").checked;
+    }
+    function render(data) {
+      state = data;
+      const events = data.events.map(item => [item.code, item.name]);
+      optionList("uploadEvent", events, data.upload.event);
+      optionList("purchaseEvent", events, initialState ? data.purchase.event : undefined);
+      optionList("privacyEvent", events, initialState ? data.privacy.event : undefined);
+      if (initialState) {
+        $photo("purchaseKind").value = data.purchase.kind;
+        $photo("purchaseStart").value = data.purchase.start;
+        $photo("purchaseEnd").value = data.purchase.end;
+        $photo("purchaseNow").checked = data.purchase.now;
+        $photo("bibs").value = data.privacy.bibs;
+        initialState = false;
+      }
+      $photo("login").textContent = data.login;
+      $photo("eventStatus").textContent = data.eventStatus;
+      setDisabled("google.login", data.loginBusy);
+      setDisabled("google.resume", !data.resume);
+      setDisabled("events.reload", data.upload.busy || data.loadingEvents);
+      if (tool === "upload") {
+        const upload = data.upload;
+        $photo("uploadEvent").disabled = upload.busy || upload.cloudBusy || data.loadingEvents;
+        put("uploadStatus", '<p>' + esc(upload.target) + '</p><p>' + esc(upload.status) + '</p>');
+        put("uploadControls", row(button("업로드 건 추가", "upload.add") +
+          button("전체 시작", "upload.startAll", { off: !upload.startable }) +
+          button("전체 일시정지", "upload.pauseAll", { off: !upload.running }) +
+          button("전체 재개", "upload.resumeAll", { off: !upload.resume }) +
+          button("전체 중지", "upload.stopAll", { off: !upload.busy }) +
+          button("클라우드 업로드 확인", "upload.count", { off: !upload.event || upload.cloudBusy })));
+        put("uploadRows", upload.rows.map(job => uploadCard(job, upload.rows.length)).join(""));
+        const repair = upload.repair;
+        put("coverage", '<p>' + esc(upload.cloudStatus) + '</p>' + upload.coverage.map(item =>
+          '<details><summary>' + esc(item.prefix) + ' · ' + item.count + '장</summary><p>업로드 구간 ' +
+          esc(item.uploaded) + '</p><p>중간 누락 번호 ' + esc(item.gaps) + '</p>' +
+          (item.unnumbered ? '<p>번호 미확인 ' + item.unnumbered + '장</p>' : "") +
+          button("복구 원본 폴더 선택", "upload.repairFolder", { value: item.prefix, off: !item.hasGaps || upload.cloudBusy }) +
+          '</details>').join("") + (repair.total
+          ? '<article class="sot-photo-job"><h4>누락 사진 업로드</h4><p>' + esc(repair.folder) + '</p><p>' +
+            repair.total + '장 · ' + bytes(repair.bytes) + ' · ' + esc(repair.ranges) + '</p>' +
+            logs(repair.files, "대상 파일 목록") + button("확인 후 업로드", "upload.repairStart", { id: repair.id }) + '</article>' : ""));
+      }
+      if (tool === "purchase") {
+        syncPurchaseButtons();
+        const purchase = data.purchase;
+        put("purchaseState", transferMarkup(purchase));
+      }
+      if (tool === "download") {
+        const download = data.download;
+        setDisabled("download.folder", download.busy);
+        setDisabled("download.start", download.busy || !download.folder || !field("urls").trim());
+        put("downloadState", transferMarkup(download));
+      }
+      if (tool === "privacy") {
+        const privacy = data.privacy;
+        setDisabled("privacy.search", privacy.busy || !field("privacyEvent") || !field("bibs").trim());
+        setDisabled("privacy.apply", !privacy.canApply || field("privacyEvent") !== privacy.event || field("bibs").trim() !== privacy.bibs.trim());
+        put("privacyState", '<p>' + esc(privacy.status) + '</p>' + row(progress(privacy.progress, privacy.total) +
+          (privacy.found ? '<span>프리뷰 ' + privacy.found + '개 · 차단 확인 ' + privacy.blocked +
+            '개 · 캐시 확인 ' + privacy.cached + '개 · 오류 ' + privacy.failures + '개</span>' : "")) + logs(privacy.log, "처리 로그"));
+      }
+      if (tool === "drive") {
+        const drive = data.drive;
+        optionList("driveAccount", drive.accounts.map((name, i) => [String(i), name]), drive.account < 0 ? "" : String(drive.account));
+        $photo("driveAccount").disabled = drive.busy;
+        setDisabled("drive.reload", drive.busy);
+        setDisabled("drive.connect", drive.busy);
+        setDisabled("drive.resumeAuth", !drive.resume);
+        setDisabled("drive.home", drive.busy || drive.account < 0);
+        setDisabled("drive.shared", drive.busy || drive.account < 0);
+        setDisabled("drive.back", drive.busy || !drive.back);
+        setDisabled("drive.link", drive.busy || drive.account < 0 || !field("driveLink").trim());
+        setDisabled("drive.choose", drive.busy || !drive.verified || drive.shared);
+        setDisabled("drive.newFolder", drive.busy || !drive.verified || drive.shared);
+        setDisabled("drive.add", !drive.target || drive.busy);
+        put("driveFolders", '<p>' + esc(drive.status) + '</p><p>' + esc(drive.current) + '</p>' +
+          row((drive.shared ? drive.drives : drive.folders).map(item =>
+            button(item.name, drive.shared ? "drive.openShared" : "drive.openFolder", { id: item.id, off: drive.busy })).join("")) +
+          (drive.target ? '<p>업로드 위치 · ' + esc(drive.target) + '</p>' : ""));
+        put("driveRows", drive.rows.map(job => driveCard(job, drive.busy, drive.authNeeded)).join(""));
+      }
+      if (tool === "rename") {
+        const rename = data.rename;
+        const numbering = field("renameMode") === "일괄 넘버링";
+        for (const name of ["renameFind", "renameReplacement", "renameBase", "renameStart", "renameWidth"]) {
+          $photo(name).closest("label").hidden = numbering !== ["renameBase", "renameStart", "renameWidth"].includes(name);
+        }
+        setDisabled("rename.folder", rename.busy);
+        setDisabled("rename.preview", rename.busy || !rename.folder);
+        setDisabled("rename.apply", rename.busy || !rename.canApply || !validRenamePreview());
+        setDisabled("rename.undo", rename.busy || !rename.canUndo);
+        put("renameState", '<p>' + esc(rename.folder) + '</p><p>' + esc(rename.status) + '</p>' +
+          logs(rename.rows.map(item => item.from + " → " + item.to), "변경 전후 파일명"));
+      }
+    }
+
+    let renamePreview;
+    function renameInput() {
+      return { value: field("renameMode"), find: field("renameFind"), replacement: field("renameReplacement"),
+               base: field("renameBase"), start: field("renameStart"), width: field("renameWidth") };
+    }
+    function validRenamePreview() {
+      return renamePreview === JSON.stringify(renameInput());
+    }
+    function dataFor(action, element) {
+      const value = element.dataset.photoValue || "";
+      const id = element.dataset.photoId || "";
+      if (["upload.start", "upload.startAll", "upload.repairStart"].includes(action)) {
+        return { event: state.upload.event, id };
+      }
+      if (action === "privacy.apply") return { id: state.privacy.id };
+      if (action === "rename.apply") return { id: state.rename.id };
+      if (action === "purchase.folder") return { event: field("purchaseEvent") };
+      if (action === "purchase.start") return { event: field("purchaseEvent"), value: field("purchaseKind"),
+        start: field("purchaseStart"), end: field("purchaseEnd"), enabled: $photo("purchaseNow").checked };
+      if (action === "download.start") return { value: field("urls") };
+      if (action === "privacy.search") return { event: field("privacyEvent"), value: field("bibs") };
+      if (action === "drive.link") return { value: field("driveLink") };
+      if (action === "rename.preview") return renameInput();
+      return { id, value };
+    }
+
+    async function request(path, payload) {
+      const headers = { Authorization: "Bearer " + token };
+      if (payload) headers["Content-Type"] = "application/json";
+      const response = await fetch(photoToolsURL + path, {
+        method: payload ? "POST" : "GET", headers, cache: "no-store", credentials: "omit", redirect: "error",
+        body: payload ? JSON.stringify(payload) : undefined,
+        signal: AbortSignal.timeout(payload ? 120000 : 5000)
+      });
+      if (response.status === 401) {
+        const error = new Error("Mac 연결 코드가 일치하지 않습니다. 앱에서 현재 코드를 다시 복사하세요.");
+        error.badCode = true;
+        throw error;
+      }
+      if (response.status === 400) throw new Error((await response.json()).error || "요청을 처리하지 못했습니다.");
+      if (!response.ok) throw new Error("Mac 연결 응답을 확인할 수 없습니다.");
+      return response.json();
+    }
+    async function refresh({ quiet = false } = {}) {
+      if (!active || !token || fetching || mutating) return;
+      fetching = true;
+      const version = requestVersion;
+      try {
+        const data = await request("/state");
+        if (version !== requestVersion) return;
+        if (data.version !== 1) {
+          setConnected(false);
+          showMessage("어드민과 Mac 연결 앱의 버전을 확인하세요.");
+          return;
+        }
+        const wasConnected = connected;
+        setConnected(true);
+        if (!wasConnected) showMessage("이 Mac에 연결됨");
+        render(data);
+      } catch (error) {
+        if (version !== requestVersion) return;
+        setConnected(false);
+        showMessage(error.badCode ? error.message :
+          "Mac 앱이 실행 중인지 확인하세요. 브라우저에서 로컬 네트워크 접근을 묻는 경우 허용하세요.");
+        if (error.badCode) disconnect(false);
+        if (quiet && !error.badCode) return;
+      } finally { fetching = false; }
+    }
+    function disconnect(clearMessage = true) {
+      requestVersion += 1;
+      token = "";
+      $photo("code").value = "";
+      try { sessionStorage.removeItem(photoToolsKey); } catch (_) {}
+      setConnected(false);
+      initialState = true;
+      renamePreview = undefined;
+      if (clearMessage) showMessage("이 브라우저의 연결을 해제했습니다. Mac에서 실행 중인 작업은 계속됩니다.");
+    }
+    async function pair() {
+      const value = field("code").trim();
+      if (!/^[a-f0-9]{48}$/.test(value)) { showMessage("Mac 연결 앱에서 복사한 코드를 입력하세요."); return; }
+      if (fetching) return;
+      token = value;
+      await refresh();
+      if (connected) {
+        try { sessionStorage.setItem(photoToolsKey, token); } catch (_) {}
+        $photo("code").value = "";
+      }
+    }
+    async function perform(action, data = {}) {
+      if (!connected || mutating) return;
+      mutating = true;
+      requestVersion += 1;
+      if (["upload.folder", "upload.repairFolder", "upload.repairStart", "purchase.folder", "download.folder",
+           "privacy.apply", "drive.newFolder", "drive.add", "rename.folder", "rename.apply", "rename.undo"].includes(action)) {
+        showMessage("Mac에 열린 창에서 계속하세요.");
+      } else { showMessage("Mac에 요청하는 중…"); }
+      try {
+        await request("/action", { ...data, action });
+        if (action === "rename.preview") renamePreview = JSON.stringify(data);
+        showMessage("이 Mac에 연결됨");
+      } catch (error) {
+        if (error.badCode) disconnect(false);
+        showMessage(error.name === "TimeoutError" ? "응답 시간이 지났습니다. 상태를 확인한 후 다시 시도하세요." : error.message);
+      } finally {
+        mutating = false;
+        await refresh();
+      }
+    }
+
+    panel.addEventListener("click", event => {
+      const element = event.target.closest("[data-photo-action]");
+      if (!element || element.disabled) return;
+      const action = element.dataset.photoAction;
+      if (action === "tool") { showTool(element.dataset.photoValue); return; }
+      if (action === "pair") { void pair(); return; }
+      if (action === "disconnect") { disconnect(); return; }
+      // The Mac also confirms privacy writes, gap repair, and renames against its current selection.
+      if (["upload.stop", "upload.stopAll", "drive.stop"].includes(action) &&
+          !window.confirm("진행 중인 전송을 마무리한 뒤 중지할까요?")) return;
+      void perform(action, dataFor(action, element));
+    });
+    panel.addEventListener("submit", event => {
+      const form = event.target.closest("[data-photo-range]");
+      if (!form) return;
+      event.preventDefault();
+      const values = new FormData(form);
+      const id = form.dataset.photoRange;
+      const data = { id, enabled: values.has("enabled"), start: values.get("start") || "", end: values.get("end") || "" };
+      if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+      void perform("upload.range", data);
+    });
+    panel.addEventListener("change", event => {
+      const name = event.target.dataset.photoField;
+      if (name === "uploadEvent" && event.target.value) void perform("upload.event", { event: event.target.value });
+      if (name === "driveAccount" && event.target.value) void perform("drive.account", { value: event.target.value });
+      if (state) render(state);
+    });
+    panel.addEventListener("input", event => {
+      if (state && ["urls", "bibs", "driveLink", "renameFind", "renameReplacement", "renameBase", "renameStart", "renameWidth"]
+          .includes(event.target.dataset.photoField)) render(state);
+    });
+    panel.addEventListener("keydown", event => {
+      if (event.key === "Enter" && event.target === $photo("code")) { event.preventDefault(); void pair(); }
+    });
+    showTool(tool);
+    return {
+      setActive(value) {
+        if (active === value) return;
+        active = value;
+        clearInterval(timer);
+        if (active) {
+          void refresh();
+          timer = setInterval(() => { void refresh({ quiet: true }); }, 1600);
+        }
+      }
+    };
+  }
+
   function initUI(){
 
     const mount = document.createElement("div");
@@ -1504,6 +1943,7 @@
         <button class="sh-admin-tab tab-btn is-active" type="button" data-admin-group="events" aria-selected="true">대회 관리</button>
         <button class="sh-admin-tab tab-btn" type="button" data-admin-group="operations" aria-selected="false">대회 운영</button>
         <button class="sh-admin-tab tab-btn" type="button" data-admin-group="analysis" aria-selected="false">결과 분석</button>
+        <button class="sh-admin-tab tab-btn" type="button" data-admin-group="photo-tools" aria-selected="false">SOT 포토 업로더</button>
       </div>
 
       <div class="sh-admin-tabs main-tabs is-hidden" data-admin-subtabs="operations" role="tablist" aria-label="대회 운영 메뉴" hidden style="display:none">
@@ -1562,6 +2002,8 @@
           <tbody id="sh_tbody"></tbody>
         </table>
       </section>
+
+      <section class="sh-admin-panel is-hidden" data-admin-panel="photo-tools" hidden></section>
 
       <section class="sh-admin-panel is-hidden" data-admin-panel="analysis-home" hidden>
         <div class="ctdash-card ctdash-section">조회할 분석 메뉴를 선택해주세요.</div>
@@ -6649,7 +7091,8 @@
       report: "analysis",
       "event-analysis": "analysis",
       legacy: "analysis",
-      "legacy-analysis-v2": "analysis"
+      "legacy-analysis-v2": "analysis",
+      "photo-tools": "photo-tools"
     };
     activeAdminView = viewName;
     activeAdminGroup = groupByView[viewName] || "events";
@@ -6672,6 +7115,10 @@
     }
     if (["report", "event-analysis", "diary", "diary-view", "photographer-view"].includes(activeAdminView)) currentDashView = activeAdminView;
     syncAdminView();
+    if (activeAdminView === "photo-tools" && !photoToolsPanel) {
+      photoToolsPanel = createPhotoTools(document.querySelector('[data-admin-panel="photo-tools"]'));
+    }
+    if (photoToolsPanel) photoToolsPanel.setActive(activeAdminView === "photo-tools");
     if (activeAdminView === "legacy") renderSotDashboard();
     if (activeAdminView === "legacy-analysis-v2") {
           renderLegacyAnalysisV2();
@@ -6725,7 +7172,7 @@
     });
     document.querySelectorAll("[data-admin-group]").forEach(btn => {
       btn.addEventListener("click", () => {
-        const defaultViewByGroup = { events: "events", operations: "diary", analysis: "analysis-home" };
+        const defaultViewByGroup = { events: "events", operations: "diary", analysis: "analysis-home", "photo-tools": "photo-tools" };
         activateAdminView(defaultViewByGroup[btn.dataset.adminGroup] || "events");
       });
     });
