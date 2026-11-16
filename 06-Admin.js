@@ -1486,7 +1486,7 @@
   const photoToolsKey = "sot_admin_photo_companion";
   let photoToolsPanel;
 
-  function createPhotoTools(panel) {
+  function createMacPhotoTools(panel) {
     const titles = {
       upload: "사진 업로드", purchase: "구매 사진 다운로드", download: "URL 다운로드",
       privacy: "프리뷰 비공개", drive: "Drive 업로드", rename: "파일명 변경"
@@ -1921,6 +1921,453 @@
     };
   }
 
+  const browserUploadApi = "https://sot-admin-web-upload-861125403956.asia-northeast3.run.app/v1";
+  const browserPhotoExtension = /\.(?:jpe?g|hif|heif|heic)$/i;
+  const browserUploadLimit = 512 * 1024 * 1024;
+  const browserUploadWorkers = 4;
+
+  function openPhotoUploadDatabase() {
+    return new Promise((resolve, reject) => {
+      const opening = indexedDB.open("sot-photo-web-uploads", 1);
+      opening.onupgradeneeded = () => {
+        const database = opening.result;
+        database.createObjectStore("jobs", { keyPath: "owner" });
+        database.createObjectStore("receipts", { keyPath: ["job", "name"] }).createIndex("byJob", "job");
+      };
+      opening.onsuccess = () => resolve(opening.result);
+      opening.onerror = () => reject(opening.error);
+    });
+  }
+
+  async function photoUploadStorage(database, store, mode, action) {
+    const db = await database;
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(store, mode);
+      const result = action(transaction.objectStore(store));
+      transaction.oncomplete = () => resolve(result?.result);
+      transaction.onabort = () => reject(transaction.error || new Error("브라우저에 작업 기록을 저장하지 못했습니다."));
+    });
+  }
+
+  function browserPhotoFiles(files) {
+    const selected = new Map();
+    for (const file of files) {
+      const name = file.name.normalize("NFC");
+      if (name.startsWith(".") || !browserPhotoExtension.test(name)) continue;
+      if (selected.has(name)) throw new Error("같은 이름의 사진이 두 장 이상 있습니다. " + name);
+      if (!file.size || file.size > browserUploadLimit) throw new Error("크기를 확인할 수 없거나 512MB를 넘는 사진이 있습니다. " + name);
+      selected.set(name, file);
+    }
+    if (!selected.size) throw new Error("이 폴더에서 업로드할 JPG·HIF·HEIC 사진을 찾지 못했습니다.");
+    return selected;
+  }
+
+  async function readBrowserPhotoDirectory(handle) {
+    const files = [];
+    for await (const entry of handle.values()) {
+      if (entry.kind === "file" && !entry.name.startsWith(".") && browserPhotoExtension.test(entry.name)) {
+        files.push(await entry.getFile());
+      }
+    }
+    return { folder: handle.name, handle, files: browserPhotoFiles(files) };
+  }
+
+  async function browserPhotoDigest(file) {
+    const bytes = new Uint8Array(await crypto.subtle.digest("SHA-256", await file.arrayBuffer()));
+    return Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+  }
+
+  function createBrowserPhotoUpload(panel, options = {}) {
+    const legacy = options.legacy;
+    panel.classList.add("sot-photo-tools");
+    panel.innerHTML = `
+      <div class="sot-photo-box">
+        <h2>사진 업로드</h2>
+        <div class="sot-photo-row">
+          <label class="sot-photo-field">대회<select class="sh-select" data-web-upload="event"></select></label>
+          <button type="button" class="sh-btn" data-web-upload="choose">폴더 선택</button>
+          <input type="file" webkitdirectory multiple hidden data-web-upload="directory">
+        </div>
+        <p data-web-upload="folder"></p>
+        <div class="sot-photo-row">
+          <button type="button" class="sh-btn" data-web-upload="start">업로드 시작</button>
+          <button type="button" class="sh-btn" data-web-upload="pause" hidden>일시정지</button>
+          <button type="button" class="sh-btn" data-web-upload="discard" hidden>작업 목록에서 제거</button>
+        </div>
+        <div class="sot-photo-row">
+          <progress data-web-upload="progress" hidden></progress>
+          <span data-web-upload="count"></span>
+        </div>
+        <p data-web-upload="message" role="status"></p>
+        <details class="sot-photo-log" data-web-upload="issues" hidden><summary>확인할 사진</summary><pre></pre></details>
+      </div>
+      <details data-web-upload="legacy" class="sot-web-upload-legacy">
+        <summary>기존 Mac 사진 도구</summary>
+        <div data-web-upload="legacy-panel"></div>
+      </details>`;
+    const control = name => panel.querySelector('[data-web-upload="' + name + '"]');
+    const owner = window.ShoutAuth.getUserId();
+    const database = openPhotoUploadDatabase();
+    const read = (store, action) => photoUploadStorage(database, store, "readonly", action);
+    const write = (store, action) => photoUploadStorage(database, store, "readwrite", action);
+    let job;
+    let selection;
+    let completed = new Set();
+    let active = false;
+    let controller;
+    let loading = true;
+    let pickerOpen = false;
+    let resumeAfterSelection = false;
+    let legacyTools;
+    let message = "";
+    let errors = [];
+    let restored = false;
+
+    function eligibleEvents() {
+      const today = formatKSTDate(new Date());
+      return allEvents.filter(event => /^\d{6}-[a-z0-9]+$/.test(event.event_code || "") &&
+        (!event.event_date || formatKSTDate(event.event_date) <= today));
+    }
+    function refreshEvents() {
+      const select = control("event");
+      const current = job?.event || select.value;
+      const listed = eligibleEvents();
+      select.replaceChildren(new Option(listed.length ? "대회 선택" : "대회 목록을 확인하는 중…", ""));
+      for (const event of listed) {
+        select.add(new Option(event.event_display_name || event.display_name || event.event_code, event.event_code));
+      }
+      if (job && !listed.some(event => event.event_code === job.event)) select.add(new Option(job.event, job.event));
+      select.value = current;
+      render();
+    }
+
+    function render() {
+      const running = !!controller;
+      const unfinished = job && completed.size < job.files.length;
+      const total = job?.files.length || selection?.files.size || 0;
+      const found = selection?.folder || job?.folder || "";
+      control("folder").textContent = found ? found + " · " + total.toLocaleString("ko-KR") + "장" : "컴퓨터나 연결된 NAS의 사진 폴더를 선택하세요.";
+      control("event").disabled = loading || running || !!unfinished;
+      control("choose").disabled = loading || pickerOpen || running;
+      control("choose").textContent = unfinished ? "원본 폴더 다시 선택" : "폴더 선택";
+      control("start").disabled = loading || pickerOpen || running || (!unfinished && (!selection || !control("event").value));
+      control("start").textContent = unfinished ? "이어 올리기" : "업로드 시작";
+      control("pause").hidden = !running;
+      control("pause").disabled = !!controller?.signal.aborted;
+      control("discard").hidden = !unfinished || running;
+      const progress = control("progress");
+      progress.hidden = !job;
+      progress.max = Math.max(1, total);
+      progress.value = completed.size;
+      control("count").textContent = job ? completed.size.toLocaleString("ko-KR") + " / " + total.toLocaleString("ko-KR") + "장 완료" : "";
+      control("issues").hidden = !errors.length;
+      control("issues").querySelector("pre").textContent = errors.join("\n");
+      control("message").textContent = message;
+    }
+
+    function matchSelection(candidate) {
+      if (job && completed.size < job.files.length) {
+        if (candidate.folder !== job.folder) throw new Error("이전에 선택한 원본 폴더를 다시 선택하세요. " + job.folder);
+        for (const photo of job.files) {
+          if (completed.has(photo.name)) continue;
+          const file = candidate.files.get(photo.name);
+          if (!file || file.size !== photo.size || file.lastModified !== photo.modified) {
+            throw new Error("원본에서 사진이 빠졌거나 수정됐습니다. " + photo.name);
+          }
+        }
+      }
+      selection = candidate;
+      message = "";
+      render();
+    }
+
+    async function chooseFolder({ resume = false } = {}) {
+      resumeAfterSelection = resume;
+      if (!window.showDirectoryPicker) {
+        control("directory").click();
+        return;
+      }
+      pickerOpen = true;
+      let picked = false;
+      try {
+        const handle = await window.showDirectoryPicker({ id: "sot-photo-source", mode: "read" });
+        matchSelection(await readBrowserPhotoDirectory(handle));
+        picked = true;
+      } catch (error) {
+        if (error.name !== "AbortError") message = error.message;
+      } finally {
+        pickerOpen = false;
+        render();
+      }
+      if (picked && resume) await runUpload();
+    }
+
+    async function saveJob() {
+      try {
+        await write("jobs", store => store.put(job));
+      } catch (error) {
+        if (!job.handle || error.name !== "DataCloneError") throw error;
+        delete job.handle;
+        await write("jobs", store => store.put(job));
+      }
+    }
+
+    async function readReceipts(jobId) {
+      return read("receipts", store => store.index("byJob").getAll(jobId));
+    }
+
+    async function clearReceipts(jobId) {
+      return write("receipts", store => {
+        const cursor = store.index("byJob").openCursor(IDBKeyRange.only(jobId));
+        cursor.onsuccess = () => {
+          if (!cursor.result) return;
+          cursor.result.delete();
+          cursor.result.continue();
+        };
+      });
+    }
+
+    async function newJob() {
+      if (!selection || !control("event").value) throw new Error("대회와 사진 폴더를 선택하세요.");
+      const previous = job;
+      job = { owner, id: crypto.randomUUID(), event: control("event").value,
+        folder: selection.folder, handle: selection.handle, resumeOnOpen: false,
+        files: Array.from(selection.files, ([name, file]) => ({ name, size: file.size, modified: file.lastModified })) };
+      try { await saveJob(); }
+      catch (error) { job = previous; throw error; }
+      completed = new Set();
+      if (previous) await clearReceipts(previous.id);
+    }
+
+    function createFileClient(event, signal) {
+      let access;
+      let pendingLogin;
+      async function call(path, body, token) {
+        const response = await fetch(browserUploadApi + path, {
+          method: "POST", headers: { "Content-Type": "application/json", Authorization: "Bearer " + token },
+          body: JSON.stringify(body), signal, credentials: "omit", referrerPolicy: "no-referrer", redirect: "error"
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const error = new Error(result.error || "업로드 서버 응답을 확인하지 못했습니다.");
+          error.status = response.status;
+          throw error;
+        }
+        return result;
+      }
+      async function login() {
+        if (access?.expiresAt > Date.now() / 1000 + 20) return access.token;
+        pendingLogin ||= call("/access", { event }, adminAccessToken()).then(result => { access = result; })
+          .finally(() => { pendingLogin = null; });
+        await pendingLogin;
+        return access.token;
+      }
+      return async body => {
+        const token = await login();
+        try { return await call("/file", body, token); }
+        catch (error) {
+          if (error.status !== 401) throw error;
+          if (access?.token === token) access = null;
+          return call("/file", body, await login());
+        }
+      };
+    }
+
+    async function uploadPhoto(photo, file, requestFile, signal) {
+      const input = { name: photo.name, size: photo.size, sha256: await browserPhotoDigest(file) };
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        signal.throwIfAborted();
+        try {
+          const state = await requestFile(input);
+          if (state.state === "complete") return;
+          const url = new URL(state.session);
+          if (state.state !== "pending" || !Number.isInteger(state.offset) || state.offset < 0 || state.offset >= file.size ||
+              url.origin !== "https://storage.googleapis.com" || !url.pathname.startsWith("/upload/storage/v1/b/")) {
+            throw new Error("GCS에서 올바른 이어올리기 주소를 받지 못했습니다.");
+          }
+          const response = await fetch(url, { method: "PUT", signal, credentials: "omit", referrerPolicy: "no-referrer",
+            redirect: "error", headers: { "Content-Type": "application/octet-stream",
+              "Content-Range": "bytes " + state.offset + "-" + (file.size - 1) + "/" + file.size },
+            body: file.slice(state.offset) });
+          if (response.ok && (await requestFile(input)).state === "complete") return;
+          if (response.status === 308 || response.status === 412 || response.status >= 500 || response.status === 429) continue;
+          const error = new Error("사진 전송을 확인하지 못했습니다. GCS " + response.status);
+          error.status = response.status;
+          throw error;
+        } catch (error) {
+          if (signal.aborted || attempt === 2 || (error.status >= 400 && error.status < 500 && error.status !== 429)) throw error;
+        }
+        await new Promise(resolve => setTimeout(resolve, (attempt + 1) * 400));
+      }
+      throw new Error("전송 결과를 확인하지 못했습니다. 이어 올리기를 다시 실행하세요.");
+    }
+
+    async function runUpload() {
+      if (controller) return;
+      const running = new AbortController();
+      controller = running;
+      errors = [];
+      message = "업로드를 준비하는 중…";
+      render();
+      try {
+        const run = async lock => {
+          if (!lock) throw new Error("다른 어드민 탭에서 업로드 중입니다.");
+          const saved = await read("jobs", store => store.get(owner));
+          if (saved?.id !== job?.id) throw new Error("다른 탭에서 작업을 변경했습니다. 어드민을 새로고침하세요.");
+          const wasUnfinished = job && completed.size < job.files.length;
+          if (wasUnfinished) {
+            completed = new Set((await readReceipts(job.id)).map(receipt => receipt.name));
+            if (completed.size === job.files.length) {
+              message = "다른 탭에서 이 작업을 완료했습니다.";
+              selection = undefined;
+              return;
+            }
+            if (selection.handle) job.handle = selection.handle;
+          } else await newJob();
+          job.resumeOnOpen = true;
+          await saveJob();
+          const pending = job.files.filter(photo => !completed.has(photo.name));
+          const requestFile = createFileClient(job.event, running.signal);
+          let index = 0;
+          let stopped = false;
+          const worker = async () => {
+            while (!running.signal.aborted && !stopped && index < pending.length) {
+              const photo = pending[index++];
+              try {
+                await uploadPhoto(photo, selection.files.get(photo.name), requestFile, running.signal);
+                await write("receipts", store => store.put({ job: job.id, name: photo.name }));
+                completed.add(photo.name);
+                message = "사진 전송 중…";
+              } catch (error) {
+                if (!running.signal.aborted) {
+                  errors.push(photo.name + " — " + error.message);
+                  if (!error.status || [401, 403, 429, 503].includes(error.status)) stopped = true;
+                }
+              }
+              render();
+            }
+          };
+          const parallel = pending.some(photo => photo.size > 64 * 1024 * 1024) ? 1 : browserUploadWorkers;
+          await Promise.all(Array.from({ length: Math.min(parallel, pending.length) }, worker));
+          job.resumeOnOpen = !running.signal.aborted && !errors.length && completed.size < job.files.length;
+          await saveJob();
+          message = running.signal.aborted ? "일시정지했습니다. 이어 올리기를 누르면 남은 사진을 보냅니다."
+            : errors.length ? "전송하지 못한 사진이 있습니다. 원인을 확인 후 다시 이어 올리세요."
+            : "사진 전송을 완료했습니다. 서버에서 사진 처리가 이어집니다.";
+          if (completed.size === job.files.length) selection = undefined;
+        };
+        if (navigator.locks) await navigator.locks.request("sot-photo-web-upload-" + owner, { ifAvailable: true }, run);
+        else await run(true);
+      } catch (error) {
+        message = error.message;
+      } finally {
+        controller = null;
+        render();
+      }
+    }
+
+    async function continueUpload(fromClick) {
+      if (loading || controller || pickerOpen) return;
+      try {
+        if (!selection && job?.handle) {
+          let permission = await job.handle.queryPermission({ mode: "read" });
+          if (permission !== "granted" && fromClick) permission = await job.handle.requestPermission({ mode: "read" });
+          if (permission === "granted") matchSelection(await readBrowserPhotoDirectory(job.handle));
+        }
+        if (!selection) {
+          message = "원본 폴더를 다시 선택하면 완료된 사진을 건너뛰고 이어 올립니다.";
+          render();
+          if (fromClick) await chooseFolder({ resume: true });
+          return;
+        }
+        await runUpload();
+      } catch (error) {
+        message = error.message;
+        render();
+      }
+    }
+
+    control("choose").addEventListener("click", () => {
+      void chooseFolder({ resume: job?.resumeOnOpen && completed.size < job.files.length });
+    });
+    control("directory").addEventListener("change", event => {
+      try {
+        const items = Array.from(event.target.files);
+        if (!items.length) return;
+        const folder = items[0].webkitRelativePath.split("/")[0];
+        const files = items.filter(file => file.webkitRelativePath.split("/").length === 2);
+        matchSelection({ folder, files: browserPhotoFiles(files) });
+        if (resumeAfterSelection) void runUpload();
+      } catch (error) {
+        message = error.message;
+        render();
+      } finally {
+        event.target.value = "";
+        resumeAfterSelection = false;
+      }
+    });
+    control("event").addEventListener("change", render);
+    control("start").addEventListener("click", () => { void continueUpload(true); });
+    control("pause").addEventListener("click", () => {
+      controller?.abort();
+      render();
+    });
+    control("discard").addEventListener("click", async () => {
+      if (controller || loading || !job || !window.confirm("이 브라우저의 이어올리기 목록에서 이 작업을 제거할까요?")) return;
+      const discard = async lock => {
+        if (!lock || (await read("jobs", store => store.get(owner)))?.id !== job.id) {
+          throw new Error("다른 탭에서 이 작업을 사용 중입니다. 어드민을 새로고침하세요.");
+        }
+        await write("jobs", store => store.delete(owner));
+        await clearReceipts(job.id);
+        job = undefined;
+        selection = undefined;
+        completed.clear();
+        errors = [];
+        message = "이 브라우저의 작업 목록에서 제거했습니다.";
+      };
+      loading = true;
+      render();
+      try {
+        if (navigator.locks) await navigator.locks.request("sot-photo-web-upload-" + owner, { ifAvailable: true }, discard);
+        else await discard(true);
+      } catch (error) { message = error.message; }
+      finally { loading = false; refreshEvents(); }
+    });
+    control("legacy").addEventListener("toggle", () => {
+      if (control("legacy").open && !legacyTools) legacyTools = legacy(control("legacy-panel"));
+      legacyTools?.setActive(active && control("legacy").open);
+    });
+
+    const restoration = (async () => {
+      try {
+        job = await read("jobs", store => store.get(owner));
+        if (job) {
+          const receipts = await readReceipts(job.id);
+          completed = new Set(receipts.map(receipt => receipt.name));
+          message = completed.size === job.files.length ? "이전 업로드가 완료됐습니다."
+            : "이전 작업을 찾았습니다. 원본 폴더에 접근할 수 있으면 이어 올립니다.";
+        }
+      } catch (error) { message = error.message; }
+      finally { loading = false; refreshEvents(); }
+    })();
+
+    return {
+      refreshEvents,
+      setActive(value) {
+        active = value;
+        legacyTools?.setActive(active && control("legacy").open);
+        if (!value) return;
+        refreshEvents();
+        void restoration.then(() => {
+          if (!active || restored) return;
+          restored = true;
+          if (job?.resumeOnOpen && completed.size < job.files.length) void continueUpload(false);
+        });
+      }
+    };
+  }
+
   function initUI(){
 
     const mount = document.createElement("div");
@@ -2079,6 +2526,7 @@
     try {
       const data = await callAdminApi("event_list");
       allEvents = adminEventList(data);
+      photoToolsPanel?.refreshEvents();
       syncFieldReportDraftsFromEvents(allEvents);
       syncMonthFilterOptions();
       applyEventFilters();
@@ -7116,7 +7564,7 @@
     if (["report", "event-analysis", "diary", "diary-view", "photographer-view"].includes(activeAdminView)) currentDashView = activeAdminView;
     syncAdminView();
     if (activeAdminView === "photo-tools" && !photoToolsPanel) {
-      photoToolsPanel = createPhotoTools(document.querySelector('[data-admin-panel="photo-tools"]'));
+      photoToolsPanel = createBrowserPhotoUpload(document.querySelector('[data-admin-panel="photo-tools"]'), { legacy: createMacPhotoTools });
     }
     if (photoToolsPanel) photoToolsPanel.setActive(activeAdminView === "photo-tools");
     if (activeAdminView === "legacy") renderSotDashboard();
